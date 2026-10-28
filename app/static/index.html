@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stock Manager</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<link href="/static/style.css" rel="stylesheet">
+</head>
+<body>
+<div id="toasts" class="toast-stack"></div>
+
+<!-- Sign in / register -->
+<main id="auth" class="auth-wrap d-none">
+  <div class="auth-card">
+    <h1 class="h3 mb-1">Stock Manager</h1>
+    <p class="text-muted mb-3">Track your products and sales in one place.</p>
+    <ul class="nav nav-pills nav-fill mb-3">
+      <li class="nav-item"><button class="nav-link active" data-tab="login">Sign in</button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="register">Create account</button></li>
+    </ul>
+    <form id="loginForm" class="vstack gap-3">
+      <div><label class="form-label" for="lu">Username</label><input id="lu" class="form-control form-control-lg" autocomplete="username" required></div>
+      <div><label class="form-label" for="lp">Password</label><input id="lp" type="password" class="form-control form-control-lg" autocomplete="current-password" required></div>
+      <button class="btn btn-brand btn-lg">Sign in</button>
+      <p class="small text-muted mb-0">Demo account (for demonstration only): <b>demo</b> / <b>Demo@12345</b></p>
+    </form>
+    <form id="regForm" class="vstack gap-3 d-none">
+      <div><label class="form-label" for="rs">Store name</label><input id="rs" class="form-control form-control-lg" maxlength="80" required></div>
+      <div><label class="form-label" for="ru">Username</label><input id="ru" class="form-control form-control-lg" minlength="3" maxlength="30" pattern="[A-Za-z0-9_.\-]+" autocomplete="username" required><div class="form-text">Letters, numbers, dot, dash, underscore.</div></div>
+      <div><label class="form-label" for="rp">Password</label><input id="rp" type="password" class="form-control form-control-lg" minlength="8" maxlength="72" autocomplete="new-password" required><div class="form-text">At least 8 characters.</div></div>
+      <button class="btn btn-brand btn-lg">Create account</button>
+    </form>
+  </div>
+</main>
+
+<!-- App -->
+<div id="app" class="d-none">
+  <header class="topbar d-lg-none">
+    <button class="btn btn-light" data-bs-toggle="offcanvas" data-bs-target="#sb" aria-label="Open menu">&#9776;</button>
+    <strong class="store-name"></strong>
+  </header>
+  <aside class="offcanvas-lg offcanvas-start sidebar" tabindex="-1" id="sb">
+    <div class="p-3">
+      <div class="brand mb-4"><span class="store-name d-block"></span><small id="whoami" class="opacity-75"></small></div>
+      <nav class="nav flex-column gap-1">
+        <a href="#" class="nav-link" data-nav="dashboard">Dashboard</a>
+        <a href="#" class="nav-link" data-nav="products">Products</a>
+        <a href="#" class="nav-link" data-nav="sales">Record a sale</a>
+        <a href="#" class="nav-link" data-nav="reports">Sales reports</a>
+      </nav>
+      <button id="logout" class="btn btn-outline-light w-100 mt-4">Log out</button>
+    </div>
+  </aside>
+
+  <main class="content">
+    <section data-view="dashboard">
+      <h2 class="h4 mb-3">Dashboard</h2>
+      <div class="row g-3 mb-3" id="stats"></div>
+      <div class="row g-3">
+        <div class="col-12 col-xl-7"><div class="panel"><h3 class="h6">Sales, last 7 days</h3><div class="chart-box"><canvas id="chart"></canvas></div></div></div>
+        <div class="col-12 col-xl-5"><div class="panel"><h3 class="h6">Needs restocking</h3><div id="lowList"></div></div></div>
+      </div>
+    </section>
+
+    <section data-view="products" class="d-none">
+      <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
+        <h2 class="h4 mb-0">Products</h2>
+        <button class="btn btn-brand" id="addProduct">Add product</button>
+      </div>
+      <input id="search" class="form-control form-control-lg mb-3" placeholder="Search by name, SKU, or category" type="search">
+      <div class="row g-3" id="productList"></div>
+    </section>
+
+    <section data-view="sales" class="d-none">
+      <h2 class="h4 mb-3">Record a sale</h2>
+      <div class="row g-3">
+        <div class="col-12 col-lg-5"><form class="panel vstack gap-3" id="saleForm">
+          <div><label class="form-label" for="saleProduct">Product</label><select id="saleProduct" class="form-select form-select-lg" required></select></div>
+          <div><label class="form-label" for="saleQty">Quantity sold</label><input id="saleQty" type="number" min="1" step="1" value="1" class="form-control form-control-lg" required></div>
+          <div class="sale-total">Total: <b id="saleTotal">₱0.00</b></div>
+          <button class="btn btn-brand btn-lg">Save sale</button>
+        </form></div>
+        <div class="col-12 col-lg-7"><div class="panel"><h3 class="h6">Recent sales</h3><div id="salesList"></div></div></div>
+      </div>
+    </section>
+
+    <section data-view="reports" class="d-none">
+      <h2 class="h4 mb-3">Sales reports</h2>
+      <form class="panel row g-2 align-items-end mb-3 no-print" id="repForm">
+        <div class="col-6 col-md-3"><label class="form-label" for="repPeriod">Period</label>
+          <select id="repPeriod" class="form-select"><option value="daily">Daily</option><option value="weekly">Weekly (Mon–Sun)</option><option value="monthly">Monthly</option></select></div>
+        <div class="col-6 col-md-3"><label class="form-label" for="repDate">Date</label><input type="date" id="repDate" class="form-control"></div>
+        <div class="col-12 col-md-6 d-flex gap-2"><button class="btn btn-brand flex-fill">Show report</button>
+          <a id="csvLink" class="btn btn-outline-secondary flex-fill">CSV</a><button type="button" id="printBtn" class="btn btn-outline-secondary flex-fill">Print</button></div>
+      </form>
+      <div id="report"></div>
+    </section>
+  </main>
+</div>
+
+<!-- Product modal -->
+<div class="modal fade" id="productModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><form class="modal-content" id="productForm">
+  <div class="modal-header"><h5 class="modal-title" id="pmTitle">Add product</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+  <div class="modal-body vstack gap-3">
+    <input type="hidden" id="pId">
+    <div><label class="form-label" for="pName">Product name</label><input id="pName" class="form-control" maxlength="100" required></div>
+    <div class="row g-2"><div class="col-6"><label class="form-label" for="pSku">SKU / code</label><input id="pSku" class="form-control" maxlength="40" required></div>
+      <div class="col-6"><label class="form-label" for="pCat">Category</label><input id="pCat" class="form-control" maxlength="50" value="General" required></div></div>
+    <div class="row g-2"><div class="col-12 col-sm-4"><label class="form-label" for="pPrice">Price (₱)</label><input id="pPrice" type="number" min="0" step="0.01" class="form-control" required></div>
+      <div class="col-6 col-sm-4"><label class="form-label" for="pQty">Stock</label><input id="pQty" type="number" min="0" step="1" class="form-control" required></div>
+      <div class="col-6 col-sm-4"><label class="form-label" for="pThr">Low-stock at</label><input id="pThr" type="number" min="0" step="1" class="form-control" required></div></div>
+  </div>
+  <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button><button class="btn btn-brand">Save product</button></div>
+</form></div></div>
+
+<!-- Delete modal -->
+<div class="modal fade" id="delModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+  <div class="modal-header"><h5 class="modal-title">Delete product?</h5></div>
+  <div class="modal-body">Delete <b id="delName"></b>? Past sales stay in your reports. This cannot be undone.</div>
+  <div class="modal-footer"><button class="btn btn-light" data-bs-dismiss="modal">Keep it</button><button class="btn btn-danger" id="delConfirm">Delete product</button></div>
+</div></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
