@@ -53,7 +53,19 @@ $('#regForm').onsubmit = guard(async e => {
   showApp(await api('/api/auth/register', {method: 'POST', body: {store_name: $('#rs').value, username: $('#ru').value, password: $('#rp').value}}));
   e.target.reset();
 });
-$('#logout').onclick = guard(async () => { await api('/api/auth/logout', {method: 'POST'}); showAuth(); toast('You are logged out.'); });
+
+const logoutModal = new bootstrap.Modal('#logoutModal');
+$('#logout').onclick = () => {
+  const sb = $('#sb'), oc = bootstrap.Offcanvas.getInstance(sb);
+  if (oc && sb.classList.contains('show')) {      // phone: close the slide-out menu first
+    sb.addEventListener('hidden.bs.offcanvas', () => logoutModal.show(), {once: true});
+    oc.hide();
+  } else logoutModal.show();                        // desktop: open the popup right away
+};
+$('#logoutConfirm').onclick = guard(async () => {
+  await api('/api/auth/logout', {method: 'POST'});
+  logoutModal.hide(); showAuth(); toast('You are logged out.');
+});
 
 /* ---------- navigation ---------- */
 function go(v) {
