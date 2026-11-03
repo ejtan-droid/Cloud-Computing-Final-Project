@@ -66,12 +66,14 @@ def money(x) -> Decimal:
 
 
 def pjson(p: Product):
-    return dict(id=p.id, name=p.name, sku=p.sku, category=p.category, price=float(p.price),
+    return dict(id=p.id, name=p.name, sku=p.sku, barcode=p.barcode, category=p.category, price=float(p.price),
                 quantity=p.quantity, low_stock_threshold=p.low_stock_threshold,
                 low_stock=p.quantity <= p.low_stock_threshold, updated_at=to_local(p.updated_at).isoformat())
 
 
 def sjson(s: Sale):
+    
+    
     return dict(id=s.id, product_name=s.product_name, quantity=s.quantity, unit_price=float(s.unit_price),
                 total=float(s.total), created_at=to_local(s.created_at).isoformat())
 
@@ -111,6 +113,12 @@ class ProductIn(Base_):
     price: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
     quantity: int = Field(ge=0, le=1_000_000)
     low_stock_threshold: int = Field(ge=0, le=1_000_000)
+    barcode: str | None = Field(default=None, max_length=64, pattern=r"^[0-9A-Za-z-]+$")
+
+    @field_validator("barcode", mode="before")
+    @classmethod
+    def _blank_barcode(cls, v):
+        return (v.strip() or None) if isinstance(v, str) else v
 
 
 class SaleIn(BaseModel):
@@ -172,10 +180,18 @@ def logout(response: Response):
 def me(user: User = Depends(current_user)):
     return user_json(user)
 
-
 # ---------- products ----------
 def sku_taken(db, uid, sku, exclude=None):
     q = select(Product.id).where(Product.owner_id == uid, func.lower(Product.sku) == sku.lower())
+    if exclude:
+        q = q.where(Product.id != exclude)
+    return db.scalar(q) is not None
+
+
+def barcode_taken(db, uid, code, exclude=None):
+    if not code:
+        return False
+    q = select(Product.id).where(Product.owner_id == uid, Product.barcode == code)
     if exclude:
         q = q.where(Product.id != exclude)
     return db.scalar(q) is not None
@@ -193,21 +209,32 @@ def list_products(q: str = Query("", max_length=60), user: User = Depends(curren
     stmt = select(Product).where(Product.owner_id == user.id)
     if q.strip():
         like = f"%{q.strip()}%"
-        stmt = stmt.where(or_(Product.name.ilike(like), Product.sku.ilike(like), Product.category.ilike(like)))
+        stmt = stmt.where(or_(Product.name.ilike(like), Product.sku.ilike(like), Product.category.ilike(like),
+                              Product.barcode.ilike(like)))
     return [pjson(p) for p in db.scalars(stmt.order_by(Product.name))]
+
+
+@app.get("/api/products/barcode/{code}")
+def product_by_barcode(code: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    p = db.scalar(select(Product).where(Product.owner_id == user.id, Product.barcode == code.strip()[:64]))
+    if not p:
+        raise HTTPException(404, "No product has that barcode.")
+    return pjson(p)
 
 
 @app.post("/api/products", status_code=201)
 def add_product(data: ProductIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     if sku_taken(db, user.id, data.sku):
         raise HTTPException(409, "You already have a product with that SKU.")
+    if barcode_taken(db, user.id, data.barcode):
+        raise HTTPException(409, "That barcode is already used by another product.")
     p = Product(owner_id=user.id, **data.model_dump())
     db.add(p)
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(409, "You already have a product with that SKU.")
+        raise HTTPException(409, "That SKU or barcode is already in use.")
     return pjson(p)
 
 
@@ -216,9 +243,15 @@ def edit_product(pid: int, data: ProductIn, user: User = Depends(current_user), 
     p = own_product(db, user.id, pid)
     if sku_taken(db, user.id, data.sku, exclude=pid):
         raise HTTPException(409, "You already have a product with that SKU.")
+    if barcode_taken(db, user.id, data.barcode, exclude=pid):
+        raise HTTPException(409, "That barcode is already used by another product.")
     for k, v in data.model_dump().items():
         setattr(p, k, v)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "That SKU or barcode is already in use.")
     return pjson(p)
 
 
@@ -229,7 +262,6 @@ def delete_product(pid: int, user: User = Depends(current_user), db: Session = D
     db.delete(p)
     db.commit()
     return {"ok": True}
-
 
 # ---------- sales ----------
 @app.post("/api/sales", status_code=201)

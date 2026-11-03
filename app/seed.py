@@ -19,6 +19,10 @@ PRODUCTS = [  # name, sku, category, price, qty, low-stock threshold
     ("Century Tuna 155g", "CAN-001", "Canned Goods", "42.00", 25, 10),
     ("Datu Puti Vinegar 385ml", "CON-001", "Condiments", "22.00", 40, 12),
 ]
+BARCODES = {  # SAMPLE numbers for the demo only (not real manufacturer barcodes)
+    "NOO-001": "999000000001", "BEV-001": "999000000002", "TOI-001": "999000000003", "FRS-001": "999000000004",
+    "BEV-002": "999000000005", "SNK-001": "999000000006", "CAN-001": "999000000007", "CON-001": "999000000008",
+}
 HISTORY = [  # sku, qty, days ago, hours ago
     ("NOO-001", 10, 6, 5), ("BEV-001", 3, 6, 3), ("BEV-002", 20, 5, 4), ("SNK-001", 8, 4, 6),
     ("TOI-001", 4, 3, 2), ("CAN-001", 5, 3, 1), ("FRS-001", 24, 2, 5), ("CON-001", 6, 2, 2),
@@ -44,7 +48,7 @@ def seed(reset: bool = False):
         items = {}
         for name, sku, cat, price, qty, thr in PRODUCTS:
             p = Product(owner_id=user.id, name=name, sku=sku, category=cat, price=Decimal(price),
-                        quantity=qty, low_stock_threshold=thr)
+                        quantity=qty, low_stock_threshold=thr, barcode=BARCODES.get(sku))
             db.add(p)
             items[sku] = p
         db.flush()

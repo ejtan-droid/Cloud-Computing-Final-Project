@@ -21,6 +21,7 @@ class User(Base):
 class Product(Base):
     __tablename__ = "products"
     __table_args__ = (UniqueConstraint("owner_id", "sku", name="uq_product_owner_sku"),
+                                            UniqueConstraint("owner_id", "barcode", name="uq_product_owner_barcode"),
                       CheckConstraint("price >= 0", name="ck_price"),
                       CheckConstraint("quantity >= 0", name="ck_qty"),
                       CheckConstraint("low_stock_threshold >= 0", name="ck_thr"))
@@ -32,6 +33,7 @@ class Product(Base):
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     quantity: Mapped[int] = mapped_column(Integer, default=0)
     low_stock_threshold: Mapped[int] = mapped_column(Integer, default=0)
+    barcode: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

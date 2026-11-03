@@ -126,3 +126,47 @@ def test_seed_is_repeatable():
 
 def test_health(client):
     assert client.get("/health").json()["database"] == "connected"
+
+
+def add_bc(c, sku, barcode, **kw):
+    body = dict(name="P" + sku, sku=sku, category="C", price="5", quantity=5, low_stock_threshold=1, barcode=barcode)
+    body.update(kw)
+    return c.post("/api/products", json=body)
+
+
+def test_barcode_add_lookup_search(client):
+    reg(client)
+    r = add_bc(client, "S1", " 4800016644801 ")
+    assert r.status_code == 201 and r.json()["barcode"] == "4800016644801"
+    assert client.get("/api/products/barcode/4800016644801").json()["sku"] == "S1"
+    assert client.get("/api/products/barcode/000").status_code == 404
+    assert client.get("/api/products?q=48000166").json()[0]["sku"] == "S1"
+
+
+def test_barcode_is_optional_and_blank_means_none(client):
+    reg(client)
+    assert add_bc(client, "A", None).json()["barcode"] is None
+    assert add_bc(client, "B", "   ").json()["barcode"] is None  # two products without barcodes are fine
+    assert add_bc(client, "C", "").status_code == 201
+
+
+def test_barcode_duplicates_and_validation(client):
+    reg(client)
+    add_bc(client, "A", "111")
+    assert add_bc(client, "B", "111").status_code == 409
+    pid = add_bc(client, "B", "222").json()["id"]
+    body = dict(name="x", sku="B", category="C", price="5", quantity=5, low_stock_threshold=1, barcode="111")
+    assert client.put(f"/api/products/{pid}", json=body).status_code == 409
+    body["barcode"] = "222"  # keeping its own barcode is fine
+    assert client.put(f"/api/products/{pid}", json=body).status_code == 200
+    assert add_bc(client, "Z", "bad code!").status_code == 422
+    assert add_bc(client, "Y", "1" * 65).status_code == 422
+
+
+def test_barcode_is_private_per_store(client):
+    reg(client)
+    add_bc(client, "A", "555")
+    bob = make_client()
+    reg(bob, "bob")
+    assert bob.get("/api/products/barcode/555").status_code == 404
+    assert add_bc(bob, "A", "555").status_code == 201  # another store may use the same code

@@ -68,7 +68,7 @@
         <h2 class="h4 mb-0">Products</h2>
         <button class="btn btn-brand" id="addProduct">Add product</button>
       </div>
-      <input id="search" class="form-control form-control-lg mb-3" placeholder="Search by name, SKU, or category" type="search">
+        <div class="input-group input-group-lg mb-3"><input id="search" class="form-control" placeholder="Search by name, SKU, category, or barcode" type="search"><button class="btn btn-brand" id="searchScan" type="button">📷 Scan</button></div>
       <div class="row g-3" id="productList"></div>
     </section>
 
@@ -106,6 +106,7 @@
     <input type="hidden" id="pId">
     <div><label class="form-label" for="pName">Product name</label><input id="pName" class="form-control" maxlength="100" required></div>
     <div class="row g-2"><div class="col-6"><label class="form-label" for="pSku">SKU / code</label><input id="pSku" class="form-control" maxlength="40" required></div>
+          <div><label class="form-label" for="pBarcode">Barcode <small class="text-muted">(optional)</small></label><div class="input-group"><input id="pBarcode" class="form-control" maxlength="64" pattern="[0-9A-Za-z\-]+" autocomplete="off" placeholder="Type, or tap Scan"><button type="button" class="btn btn-outline-secondary" id="pScan">📷 Scan</button></div></div>
       <div class="col-6"><label class="form-label" for="pCat">Category</label><input id="pCat" class="form-control" maxlength="50" value="General" required></div></div>
     <div class="row g-2"><div class="col-12 col-sm-4"><label class="form-label" for="pPrice">Price (₱)</label><input id="pPrice" type="number" min="0" step="0.01" class="form-control" required></div>
       <div class="col-6 col-sm-4"><label class="form-label" for="pQty">Stock</label><input id="pQty" type="number" min="0" step="1" class="form-control" required></div>
@@ -121,6 +122,20 @@
   <div class="modal-footer"><button class="btn btn-light" data-bs-dismiss="modal">Keep it</button><button class="btn btn-danger" id="delConfirm">Delete product</button></div>
 </div></div></div>
 
+<!-- Scanner modal -->
+<div class="modal fade" id="scanModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false"><div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+  <div class="modal-header"><h5 class="modal-title">Scan barcode</h5></div>
+  <div class="modal-body"><div id="reader" style="width:100%"></div><p id="scanMsg" class="small text-muted mt-2 mb-0"></p></div>
+  <div class="modal-footer"><button type="button" class="btn btn-light" id="scanCancel">Cancel</button></div>
+</div></div></div>
+
+<!-- Unknown barcode modal -->
+<div class="modal fade" id="unknownModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+  <div class="modal-header"><h5 class="modal-title">Barcode not registered</h5></div>
+  <div class="modal-body">The barcode <b id="unkCode"></b> is not in your products yet. Add it as a new product?</div>
+  <div class="modal-footer"><button class="btn btn-light" data-bs-dismiss="modal">Not now</button><button class="btn btn-brand" id="unkAdd">Add as new product</button></div>
+</div></div></div>
+
 <!-- Logout modal -->
 <div class="modal fade" id="logoutModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content">
   <div class="modal-header"><h5 class="modal-title">Log out?</h5></div>
@@ -130,6 +145,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

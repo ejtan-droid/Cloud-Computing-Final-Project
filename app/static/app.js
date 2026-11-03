@@ -100,7 +100,7 @@ const loadProducts = guard(async () => {
     <div class="col-12 col-md-6 col-xl-4"><div class="pcard h-100">
       <div class="d-flex justify-content-between gap-2"><h3>${esc(p.name)}</h3>
         <span class="badge ${p.low_stock ? 'badge-low' : 'badge-ok'} align-self-start">${p.low_stock ? 'Low stock' : 'In stock'}</span></div>
-      <small class="text-muted">${esc(p.sku)} · ${esc(p.category)}</small>
+      <small class="text-muted">${esc(p.sku)} · ${esc(p.category)}${p.barcode ? ' · Barcode ' + esc(p.barcode) : ''}</small>
       <div class="d-flex justify-content-between my-2"><span>${peso(p.price)}</span><span><b>${p.quantity}</b> in stock <small class="text-muted">(alert at ${p.low_stock_threshold})</small></span></div>
       <div class="d-flex gap-2"><button class="btn btn-outline-secondary flex-fill" data-edit="${p.id}">Edit</button><button class="btn btn-outline-danger flex-fill" data-del="${p.id}">Delete</button></div>
     </div></div>`).join('') : '<p class="text-muted">No products found. Use “Add product” to create one.</p>';
@@ -110,8 +110,12 @@ function openProduct(p) {
   $('#pmTitle').textContent = p ? 'Edit product' : 'Add product';
   $('#pId').value = p?.id || ''; $('#pName').value = p?.name || ''; $('#pSku').value = p?.sku || '';
   $('#pCat').value = p?.category || 'General'; $('#pPrice').value = p?.price ?? ''; $('#pQty').value = p?.quantity ?? '';
+  $('#pBarcode').value = p?.barcode || '';
   $('#pThr').value = p?.low_stock_threshold ?? 5; productModal.show();
 }
+// USB scanners press Enter after each scan: don't submit the form by accident
+$('#pBarcode').addEventListener('keydown', e => { if (e.key === 'Enter') e.preventDefault(); });
+
 $('#addProduct').onclick = () => openProduct(null);
 $('#productList').onclick = e => {
   const ed = e.target.closest('[data-edit]'), del = e.target.closest('[data-del]');
@@ -122,11 +126,85 @@ $('#productForm').onsubmit = guard(async e => {
   e.preventDefault();
   const id = $('#pId').value;
   const body = {name: $('#pName').value, sku: $('#pSku').value, category: $('#pCat').value, price: $('#pPrice').value,
-                quantity: parseInt($('#pQty').value, 10), low_stock_threshold: parseInt($('#pThr').value, 10)};
+                quantity: parseInt($('#pQty').value, 10), low_stock_threshold: parseInt($('#pThr').value, 10),
+                barcode: $('#pBarcode').value.trim() || null};
   await api(id ? '/api/products/' + id : '/api/products', {method: id ? 'PUT' : 'POST', body});
   productModal.hide(); toast(id ? 'Product updated.' : 'Product added.'); loadProducts();
 });
 $('#delConfirm').onclick = guard(async () => { await api('/api/products/' + delId, {method: 'DELETE'}); delModal.hide(); toast('Product deleted.'); loadProducts(); });
+
+/* ---------- barcode scanning (camera) ---------- */
+const scanModalEl = $('#scanModal'), scanModal = new bootstrap.Modal(scanModalEl);
+const unknownModalEl = $('#unknownModal'), unknownModal = new bootstrap.Modal(unknownModalEl);
+let scanner = null, scanFinish = null, unknownCode = '';
+const hideModal = (m, el) => new Promise(r => { el.addEventListener('hidden.bs.modal', r, {once: true}); m.hide(); });
+const cleanCode = c => { c = String(c || '').trim(); return /^[0-9A-Za-z-]{1,64}$/.test(c) ? c : ''; };
+
+function scanBarcode() {   // opens the camera popup; resolves with the scanned text, or null if cancelled
+  return new Promise(resolve => {
+    let finished = false;
+    scanFinish = async code => {
+      if (finished) return; finished = true;
+      try { if (scanner && scanner.isScanning) await scanner.stop(); if (scanner) scanner.clear(); } catch {}
+      scanner = null;
+      scanModalEl.addEventListener('hidden.bs.modal', () => resolve(code), {once: true});
+      scanModal.hide();
+    };
+    $('#scanMsg').textContent = 'Starting camera…';
+    scanModalEl.addEventListener('shown.bs.modal', async () => {
+      if (!window.Html5Qrcode) { $('#scanMsg').textContent = 'The scanner could not load. Cancel and type the barcode instead.'; return; }
+      try {
+        const F = Html5QrcodeSupportedFormats;
+        scanner = new Html5Qrcode('reader', {verbose: false, experimentalFeatures: {useBarcodeDetector: true},
+          formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39]});
+        await scanner.start({facingMode: 'environment'},
+          {fps: 10, qrbox: (w, h) => ({width: Math.floor(w * 0.85), height: Math.floor(Math.min(h * 0.6, 160))})},
+          text => scanFinish(text.trim()), () => {});
+        $('#scanMsg').textContent = 'Point the camera at the barcode.';
+      } catch {
+        $('#scanMsg').textContent = 'Camera unavailable. Allow camera permission (the site must use https), or cancel and type the barcode.';
+      }
+    }, {once: true});
+    scanModal.show();
+  });
+}
+$('#scanCancel').onclick = () => scanFinish && scanFinish(null);
+
+async function findByBarcode(code) {   // returns the product, or null when the barcode is not registered
+  try { return await api('/api/products/barcode/' + encodeURIComponent(code)); }
+  catch (e) { if (/No product has that barcode/.test(e.message)) return null; throw e; }
+}
+async function handleBarcode(raw) {    // used by the camera button and by USB scanners in the search box
+  const code = cleanCode(raw);
+  if (!code) { toast('That code is not a supported barcode.', 'warning'); return; }
+  $('#search').value = code;
+  const p = await findByBarcode(code);
+  await loadProducts();
+  if (p) { toast('Found: ' + p.name); return; }
+  unknownCode = code; $('#unkCode').textContent = code; unknownModal.show();
+}
+$('#searchScan').onclick = guard(async () => { const c = await scanBarcode(); if (c) await handleBarcode(c); });
+$('#search').addEventListener('keydown', guard(async e => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault(); clearTimeout(st);
+  const v = $('#search').value.trim();
+  if (/^\d{8,}$/.test(v)) await handleBarcode(v); else await loadProducts();   // long number = scanned barcode
+}));
+$('#unkAdd').onclick = guard(async () => {
+  await hideModal(unknownModal, unknownModalEl);
+  openProduct(null); $('#pBarcode').value = unknownCode; $('#search').value = ''; loadProducts();
+});
+$('#pScan').onclick = guard(async () => {   // scan inside the Add/Edit form
+  let code = null;
+  await hideModal(productModal, $('#productModal'));   // hide the form while the camera is open
+  try { code = await scanBarcode(); } finally { productModal.show(); }
+  if (!code) return;
+  const c = cleanCode(code);
+  if (!c) { toast('That code is not a supported barcode.', 'warning'); return; }
+  $('#pBarcode').value = c;
+  const hit = await findByBarcode(c);
+  if (hit && String(hit.id) !== $('#pId').value) toast(`Warning: this barcode already belongs to "${hit.name}".`, 'warning');
+});
 
 /* ---------- sales ---------- */
 function updateTotal() {
