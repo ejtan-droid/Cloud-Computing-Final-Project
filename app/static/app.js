@@ -136,12 +136,13 @@ $('#delConfirm').onclick = guard(async () => { await api('/api/products/' + delI
 /* ---------- barcode scanning (camera) ---------- */
 const scanModalEl = $('#scanModal'), scanModal = new bootstrap.Modal(scanModalEl);
 const unknownModalEl = $('#unknownModal'), unknownModal = new bootstrap.Modal(unknownModalEl);
-let scanner = null, scanFinish = null, unknownCode = '';
+let scanner = null, scanFinish = null, unknownCode = '', lastScan = {code: '', at: 0};
 const hideModal = (m, el) => new Promise(r => { el.addEventListener('hidden.bs.modal', r, {once: true}); m.hide(); });
 const cleanCode = c => { c = String(c || '').trim(); return /^[0-9A-Za-z-]{1,64}$/.test(c) ? c : ''; };
 
-function scanBarcode() {   // opens the camera popup; resolves with the scanned text, or null if cancelled
+function scanBarcode(onEach) {   // onEach (optional): keep the camera open and call it for every code.
   return new Promise(resolve => {
+    lastScan = {code: '', at: 0};
     let finished = false;
     scanFinish = async code => {
       if (finished) return; finished = true;
@@ -159,7 +160,10 @@ function scanBarcode() {   // opens the camera popup; resolves with the scanned 
           formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39]});
         await scanner.start({facingMode: 'environment'},
           {fps: 10, qrbox: (w, h) => ({width: Math.floor(w * 0.85), height: Math.floor(Math.min(h * 0.6, 160))})},
-          text => scanFinish(text.trim()), () => {});
+          text => {
+            lastScan = {code: text.trim(), at: Date.now()};
+            if (onEach) onEach(lastScan.code);
+          }, () => {});
         $('#scanMsg').textContent = 'Point the camera at the barcode.';
       } catch {
         $('#scanMsg').textContent = 'Camera unavailable. Allow camera permission (the site must use https), or cancel and type the barcode.';
@@ -206,26 +210,133 @@ $('#pScan').onclick = guard(async () => {   // scan inside the Add/Edit form
   if (hit && String(hit.id) !== $('#pId').value) toast(`Warning: this barcode already belongs to "${hit.name}".`, 'warning');
 });
 
-/* ---------- sales ---------- */
-function updateTotal() {
-  const p = products.find(p => p.id == $('#saleProduct').value), q = parseInt($('#saleQty').value, 10) || 0;
-  $('#saleTotal').textContent = peso(p ? p.price * q : 0);
+/* ---------- sales: the bill (cart) ---------- */
+let bill = [], busy = false;
+const cents = n => Math.round(n * 100);
+const stockOf = l => products.find(p => p.id === l.id)?.quantity ?? 0;
+const lineTotal = l => l.price * l.qty;
+const billTotal = () => bill.reduce((s, l) => s + lineTotal(l), 0);
+
+function searchResults() {
+  const q = $('#saleSearch').value.trim().toLowerCase();
+  if (!q) return [];
+  return products.filter(p => [p.name, p.sku, p.category, p.barcode].some(v => (v || '').toLowerCase().includes(q))).slice(0, 8);
 }
-const loadSales = guard(async () => {
-  const keep = $('#saleProduct').value;
-  await fetchProducts();
-  $('#saleProduct').innerHTML = products.length ? products.map(p => `<option value="${p.id}" ${p.quantity ? '' : 'disabled'}>${esc(p.name)} — ${p.quantity} in stock · ${peso(p.price)}</option>`).join('') : '<option value="">Add a product first</option>';
-  if (keep) $('#saleProduct').value = keep;
-  updateTotal();
-  const s = await api('/api/sales');
-  $('#salesList').innerHTML = s.length ? s.map(x => `<div class="row-item"><div><b>${esc(x.product_name)}</b> × ${x.quantity}<br><small class="text-muted">${when(x.created_at)}</small></div><b>${peso(x.total)}</b></div>`).join('') : '<p class="text-muted mb-0">No sales yet.</p>';
-});
-$('#saleProduct').onchange = updateTotal; $('#saleQty').oninput = updateTotal;
-$('#saleForm').onsubmit = guard(async e => {
+function renderResults() {
+  const q = $('#saleSearch').value.trim(), r = searchResults();
+  $('#saleResults').innerHTML = !q ? '' : r.length ? r.map(p => `
+    <button type="button" class="list-group-item list-group-item-action d-flex justify-content-between gap-2" data-add="${p.id}" ${p.quantity ? '' : 'disabled'}>
+      <span><b>${esc(p.name)}</b><br><small class="text-muted">${esc(p.sku)}${p.barcode ? ' · ' + esc(p.barcode) : ''}</small></span>
+      <span class="text-end">${peso(p.price)}<br><small class="${p.quantity ? 'text-muted' : 'text-danger'}">${p.quantity ? p.quantity + ' in stock' : 'Out of stock'}</small></span>
+    </button>`).join('') : '<div class="text-muted small">No matching product.</div>';
+}
+function addToBill(id) {
+  const p = products.find(p => p.id == id); if (!p) return;
+  const line = bill.find(l => l.id === p.id);
+  if (line) {
+    if (line.qty >= p.quantity) { toast(`Only ${p.quantity} of ${p.name} in stock.`, 'warning'); return; }
+    line.qty++;
+  } else if (p.quantity < 1) { toast(p.name + ' is out of stock.', 'warning'); return; }
+  else bill.push({id: p.id, name: p.name, price: p.price, qty: 1});
+  renderBill();
+}
+function renderBill() {
+  $('#billLines').innerHTML = bill.length ? bill.map(l => `
+    <div class="bill-line">
+      <div class="bill-name"><b>${esc(l.name)}</b><br><small class="text-muted">${peso(l.price)} each</small></div>
+      <div class="qty-box">
+        <button type="button" class="btn btn-outline-secondary" data-act="dec" data-id="${l.id}" aria-label="Less">−</button>
+        <input type="number" class="form-control" min="1" max="${stockOf(l)}" value="${l.qty}" data-qty="${l.id}" inputmode="numeric" aria-label="Quantity">
+        <button type="button" class="btn btn-outline-secondary" data-act="inc" data-id="${l.id}" aria-label="More">+</button>
+      </div>
+      <div class="bill-sum"><b>${peso(lineTotal(l))}</b><button type="button" class="btn btn-sm btn-link text-danger" data-act="del" data-id="${l.id}">Remove</button></div>
+    </div>`).join('') : '<p class="text-muted mb-0">No items yet. Search for a product above.</p>';
+  updateTotals();
+}
+function updateTotals() {
+  const t = billTotal(), cash = parseFloat($('#cashIn').value), hasCash = !isNaN(cash);
+  $('#billTotal').textContent = peso(t);
+  $('#changeOut').innerHTML = !hasCash ? '—' : cents(cash) >= cents(t) ? peso(cash - t) : `<span class="text-danger">Short by ${peso(t - cash)}</span>`;
+  $('#checkoutBtn').disabled = busy || !bill.length || (hasCash && cents(cash) < cents(t));
+}
+$('#saleSearch').oninput = renderResults;
+$('#saleResults').onclick = e => {
+  const b = e.target.closest('[data-add]'); if (!b) return;
+  addToBill(b.dataset.add); $('#saleSearch').value = ''; renderResults(); $('#saleSearch').focus();
+};
+$('#saleSearch').addEventListener('keydown', e => {   // Enter (e.g. from a USB scanner) adds the matching product
+  if (e.key !== 'Enter') return;
   e.preventDefault();
-  const r = await api('/api/sales', {method: 'POST', body: {product_id: +$('#saleProduct').value, quantity: parseInt($('#saleQty').value, 10)}});
-  toast(`Sale saved: ${peso(r.sale.total)}. ${r.product.name} now has ${r.product.quantity} in stock.` + (r.product.low_stock ? ' Low stock — time to restock!' : ''), r.product.low_stock ? 'warning' : 'success');
-  $('#saleQty').value = 1; loadSales();
+  const q = $('#saleSearch').value.trim(); if (!q) return;
+  const r = searchResults(), pick = products.find(p => p.barcode && p.barcode === q) || (r.length === 1 ? r[0] : null);
+  if (pick) { addToBill(pick.id); $('#saleSearch').value = ''; renderResults(); }
+  else toast(r.length ? 'Tap the product you want from the list.' : `No product found for "${q}".`, 'warning');
+});
+$('#billLines').onclick = e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const l = bill.find(x => x.id === +b.dataset.id); if (!l) return;
+  if (b.dataset.act === 'del') bill = bill.filter(x => x !== l);
+  else if (b.dataset.act === 'inc') { if (l.qty >= stockOf(l)) toast(`Only ${stockOf(l)} of ${l.name} in stock.`, 'warning'); else l.qty++; }
+  else if (l.qty > 1) l.qty--;
+  renderBill();
+};
+$('#billLines').onchange = e => {
+  const i = e.target.closest('[data-qty]'); if (!i) return;
+  const l = bill.find(x => x.id === +i.dataset.qty); if (!l) return;
+  let q = parseInt(i.value, 10); if (!(q >= 1)) q = 1;
+  if (q > stockOf(l)) { q = Math.max(stockOf(l), 1); toast(`Only ${q} of ${l.name} in stock.`, 'warning'); }
+  l.qty = q; renderBill();
+};
+
+function scanToBill(raw) {   // called for every barcode the camera reads; returns the message to show
+  const code = cleanCode(raw);
+  if (!code) return 'That is not a supported barcode.';
+  const p = products.find(p => p.barcode === code);
+  if (!p) return `Not registered: ${code}. Keep scanning, or tap Done.`;
+  const line = bill.find(l => l.id === p.id);
+  if (p.quantity < 1) return `${p.name} is out of stock.`;
+  if (line && line.qty >= p.quantity) return `Only ${p.quantity} of ${p.name} in stock.`;
+  addToBill(p.id);
+  if (navigator.vibrate) navigator.vibrate(80);
+  return `✓ ${p.name} × ${bill.find(l => l.id === p.id).qty}. Bill total ${peso(billTotal())}. Scan the next item, or tap Done.`;
+}
+$('#saleScan').onclick = guard(async () => {
+  if (!products.length) await fetchProducts();
+  $('#scanCancel').textContent = 'Done';
+  try { await scanBarcode(scanToBill); } finally { $('#scanCancel').textContent = 'Cancel'; }
+});
+
+$('#cashIn').oninput = updateTotals;
+$('#clearBill').onclick = () => { if (bill.length && confirm('Clear the whole bill?')) { bill = []; $('#cashIn').value = ''; renderBill(); } };
+$('#checkoutBtn').onclick = guard(async () => {
+  if (busy || !bill.length) return;
+  busy = true; updateTotals();
+  const cash = parseFloat($('#cashIn').value);
+  try {
+    const r = await api('/api/checkout', {method: 'POST', body: {items: bill.map(l => ({product_id: l.id, quantity: l.qty}))}});
+    let msg = `Sale recorded: ${peso(r.total)} (${r.receipt_no}).`;
+    if (!isNaN(cash)) msg += ` Change: ${peso(cash - r.total)}.`;
+    if (r.low_stock.length) msg += ' Low stock: ' + r.low_stock.map(p => `${p.name} (${p.quantity} left)`).join(', ') + '.';
+    toast(msg, r.low_stock.length ? 'warning' : 'success');
+    bill = []; $('#cashIn').value = '';
+  } catch (e) { await loadSales(); throw e; }   // stock may have changed: refresh, but keep the bill
+  finally { busy = false; }
+  await loadSales();
+});
+const loadSales = guard(async () => {
+  await fetchProducts();
+  bill = bill.filter(l => stockOf(l) > 0);                 // drop deleted / sold-out items
+  bill.forEach(l => { const p = products.find(p => p.id === l.id); l.price = p.price; l.name = p.name; l.qty = Math.min(l.qty, p.quantity); });
+  renderBill(); renderResults();
+    if (matchMedia('(pointer: fine)').matches) $('#saleSearch').focus();   // computers: ready for a USB scanner
+  const s = await api('/api/sales?limit=100'), groups = [], seen = {};
+  for (const x of s) {                                     // items of one bill share a receipt number
+    if (x.receipt_no) {
+      const g = seen[x.receipt_no] ||= (groups.push({receipt: x.receipt_no, items: [], total: 0, at: x.created_at}), groups[groups.length - 1]);
+      g.items.push(x); g.total += x.total;
+    } else groups.push({items: [x], total: x.total, at: x.created_at});
+  }
+  $('#salesList').innerHTML = groups.slice(0, 20).map(g => `<div class="row-item"><div><b>${g.receipt ? esc(g.receipt) : esc(g.items[0].product_name) + ' × ' + g.items[0].quantity}</b><br><small class="text-muted">${when(g.at)}</small>${g.receipt ? '<br><small>' + g.items.map(i => esc(i.product_name) + ' × ' + i.quantity).join(', ') + '</small>' : ''}</div><b>${peso(g.total)}</b></div>`).join('') || '<p class="text-muted mb-0">No sales yet.</p>';
 });
 
 /* ---------- reports ---------- */

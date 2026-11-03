@@ -170,3 +170,45 @@ def test_barcode_is_private_per_store(client):
     reg(bob, "bob")
     assert bob.get("/api/products/barcode/555").status_code == 404
     assert add_bc(bob, "A", "555").status_code == 201  # another store may use the same code
+
+def cart(*pairs):
+    return {"items": [{"product_id": p, "quantity": q} for p, q in pairs]}
+
+
+def test_checkout_many_items(client):
+    reg(client)
+    a = add(client, sku="A", price="10.50", qty=10, thr=2).json()["id"]
+    b = add(client, sku="B", price="2.25", qty=3, thr=3, name="Other").json()["id"]
+    r = client.post("/api/checkout", json=cart((a, 3), (b, 2), (a, 1)))  # A appears twice -> merged to 4
+    assert r.status_code == 201
+    d = r.json()
+    assert d["total"] == 46.5 and len(d["items"]) == 2 and d["receipt_no"].startswith("R")
+    assert {i["receipt_no"] for i in d["items"]} == {d["receipt_no"]}
+    stock = {p["id"]: p["quantity"] for p in client.get("/api/products").json()}
+    assert stock == {a: 6, b: 1}
+    assert [p["id"] for p in d["low_stock"]] == [b]
+    assert client.get("/api/reports?period=daily").json()["total_sales"] == 46.5
+
+
+def test_checkout_is_all_or_nothing(client):
+    reg(client)
+    a = add(client, sku="A", qty=10).json()["id"]
+    b = add(client, sku="B", qty=1, name="Scarce").json()["id"]
+    r = client.post("/api/checkout", json=cart((a, 4), (b, 2)))
+    assert r.status_code == 400 and "Scarce (only 1 left)" in r.json()["detail"]
+    stock = {p["id"]: p["quantity"] for p in client.get("/api/products").json()}
+    assert stock == {a: 10, b: 1}          # nothing was deducted, not even product A
+    assert client.get("/api/sales").json() == []
+
+
+def test_checkout_rejects_bad_requests(client):
+    reg(client)
+    a = add(client, qty=5).json()["id"]
+    assert client.post("/api/checkout", json={"items": []}).status_code == 422
+    assert client.post("/api/checkout", json=cart((a, 0))).status_code == 422
+    assert client.post("/api/checkout", json=cart((9999, 1))).status_code == 404
+    bob = make_client()
+    reg(bob, "bob")
+    assert bob.post("/api/checkout", json=cart((a, 1))).status_code == 404   # not bob's product
+    assert make_client().post("/api/checkout", json=cart((a, 1))).status_code == 401
+    assert client.get("/api/products").json()[0]["quantity"] == 5

@@ -49,4 +49,5 @@ class Sale(Base):
     quantity: Mapped[int] = mapped_column(Integer)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     total: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    receipt_no: Mapped[str | None] = mapped_column(String(30), nullable=True)  # same for all items of one bill
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

@@ -30,3 +30,11 @@ body{font-family:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",Roboto,s
 .toast-stack{position:fixed;top:10px;left:10px;right:10px;z-index:2000;display:grid;gap:8px;max-width:420px;margin:auto}
 .table-wrap{overflow-x:auto}
 @media print{.sidebar,.topbar,.no-print,.toast-stack{display:none!important}.content{margin:0;padding:0}body{background:#fff}}
+
+.bill-line{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:10px 0;border-bottom:1px solid #edf2f1}
+.bill-name{min-width:0;overflow-wrap:anywhere}
+.qty-box{display:flex;gap:4px;align-items:center}
+.qty-box input{width:64px;text-align:center}
+.qty-box .btn{width:44px;padding:0}
+.bill-sum{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center}
+.bill-total{font-size:1.35rem;padding-top:12px}

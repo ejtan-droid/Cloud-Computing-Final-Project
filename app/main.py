@@ -2,6 +2,7 @@
 import csv
 import io
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from datetime import date as Date, datetime, time, timedelta, timezone
 from decimal import Decimal
@@ -74,7 +75,7 @@ def pjson(p: Product):
 def sjson(s: Sale):
     
     
-    return dict(id=s.id, product_name=s.product_name, quantity=s.quantity, unit_price=float(s.unit_price),
+    return dict(id=s.id, product_name=s.product_name, receipt_no=s.receipt_no, quantity=s.quantity, unit_price=float(s.unit_price),
                 total=float(s.total), created_at=to_local(s.created_at).isoformat())
 
 
@@ -124,6 +125,14 @@ class ProductIn(Base_):
 class SaleIn(BaseModel):
     product_id: int
     quantity: int = Field(gt=0, le=100_000)
+
+class CartLine(BaseModel):
+    product_id: int
+    quantity: int = Field(gt=0, le=100_000)
+
+
+class CheckoutIn(BaseModel):
+    items: list[CartLine] = Field(min_length=1, max_length=50)
 
 
 # ---------- auth ----------
@@ -288,7 +297,49 @@ def record_sale(data: SaleIn, user: User = Depends(current_user), db: Session = 
         raise
     return {"sale": sjson(sale), "product": pjson(p)}
 
-
+@app.post("/api/checkout", status_code=201)
+def checkout(data: CheckoutIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Record a whole bill (many products) in ONE transaction: all items are saved, or none."""
+    wanted: dict[int, int] = {}
+    for line in data.items:  # same product on two lines -> merge
+        wanted[line.product_id] = wanted.get(line.product_id, 0) + line.quantity
+    found = db.scalars(select(Product).where(Product.owner_id == user.id, Product.id.in_(list(wanted)))).all()
+    products = {p.id: p for p in found}
+    if len(products) != len(wanted):
+        raise HTTPException(404, "A product on the bill no longer exists. Refresh the page and try again.")
+    receipt_no = "R" + datetime.now(tz()).strftime("%y%m%d") + "-" + secrets.token_hex(3).upper()
+    short = []
+    try:
+        for pid in sorted(wanted):  # fixed order: two phones selling at once cannot block each other
+            res = db.execute(update(Product).where(Product.id == pid, Product.owner_id == user.id,
+                                                   Product.quantity >= wanted[pid])
+                             .values(quantity=Product.quantity - wanted[pid], updated_at=utcnow()))
+            if res.rowcount != 1:
+                short.append(pid)
+        if short:
+            db.rollback()  # undo every deduction made so far
+            names = []
+            for pid in short:
+                db.refresh(products[pid])
+                names.append(f"{products[pid].name} (only {products[pid].quantity} left)")
+            raise HTTPException(400, "Not enough stock for: " + ", ".join(names) + ". Nothing was saved.")
+        sales = []
+        for pid in sorted(wanted):
+            p = products[pid]
+            db.refresh(p)
+            s = Sale(owner_id=user.id, product_id=pid, product_name=p.name, quantity=wanted[pid],
+                     unit_price=p.price, total=money(p.price * wanted[pid]), receipt_no=receipt_no)
+            db.add(s)
+            sales.append(s)
+        db.commit()  # every line and every stock deduction are saved together
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    total = sum((s.total for s in sales), Decimal(0))
+    return {"receipt_no": receipt_no, "total": float(total), "items": [sjson(s) for s in sales],
+            "low_stock": [pjson(p) for p in products.values() if p.quantity <= p.low_stock_threshold]}
 @app.get("/api/sales")
 def list_sales(limit: int = Query(50, ge=1, le=200), user: User = Depends(current_user), db: Session = Depends(get_db)):
     q = select(Sale).where(Sale.owner_id == user.id).order_by(Sale.created_at.desc(), Sale.id.desc()).limit(limit)
