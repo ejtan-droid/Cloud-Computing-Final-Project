@@ -140,16 +140,24 @@ let scanner = null, scanFinish = null, unknownCode = '', lastScan = {code: '', a
 const hideModal = (m, el) => new Promise(r => { el.addEventListener('hidden.bs.modal', r, {once: true}); m.hide(); });
 const cleanCode = c => { c = String(c || '').trim(); return /^[0-9A-Za-z-]{1,64}$/.test(c) ? c : ''; };
 
-function scanBarcode(onEach) {   // onEach (optional): keep the camera open and call it for every code.
-  return new Promise(resolve => {
+function releaseCamera() {   // always free the camera, even if the library's own stop() is slow or fails
+  const old = scanner; scanner = null;
+  document.querySelectorAll('#reader video').forEach(v => { try { if (v.srcObject) v.srcObject.getTracks().forEach(t => t.stop()); } catch {} });
+  if (!old) return;
+  Promise.race([Promise.resolve().then(() => old.stop()), new Promise(r => setTimeout(r, 1500))])
+    .catch(() => {}).finally(() => { try { old.clear(); } catch {} });
+}
+
+function scanBarcode(onEach) {   // opens the camera popup; resolves with the scanned text, or null if cancelled
+  return new Promise(resolve => {                     // onEach (optional): keep the camera open and call it for every code
     lastScan = {code: '', at: 0};
     let finished = false;
-    scanFinish = async code => {
+    scanFinish = code => {
       if (finished) return; finished = true;
-      try { if (scanner && scanner.isScanning) await scanner.stop(); if (scanner) scanner.clear(); } catch {}
-      scanner = null;
+      releaseCamera();                                // do not wait for the scanner library
       scanModalEl.addEventListener('hidden.bs.modal', () => resolve(code), {once: true});
       scanModal.hide();
+      setTimeout(() => resolve(code), 1500);          // safety net if the popup's hidden event never arrives
     };
     $('#scanMsg').textContent = 'Starting camera…';
     scanModalEl.addEventListener('shown.bs.modal', async () => {
@@ -161,10 +169,14 @@ function scanBarcode(onEach) {   // onEach (optional): keep the camera open and 
         await scanner.start({facingMode: 'environment'},
           {fps: 10, qrbox: (w, h) => ({width: Math.floor(w * 0.85), height: Math.floor(Math.min(h * 0.6, 160))})},
           text => {
-            lastScan = {code: text.trim(), at: Date.now()};
-            if (onEach) onEach(lastScan.code);
+            const c = String(text || '').trim();
+            if (!onEach) { $('#scanMsg').textContent = 'Read: ' + c; scanFinish(c); return; }
+            const now = Date.now();
+            if (c === lastScan.code && now - lastScan.at < 2500) return;   // same barcode still in view: ignore
+            lastScan = {code: c, at: now};
+            $('#scanMsg').textContent = onEach(c);
           }, () => {});
-        $('#scanMsg').textContent = 'Point the camera at the barcode.';
+        if (!finished) $('#scanMsg').textContent = 'Point the camera at the barcode.';
       } catch {
         $('#scanMsg').textContent = 'Camera unavailable. Allow camera permission (the site must use https), or cancel and type the barcode.';
       }
